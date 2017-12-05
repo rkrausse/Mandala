@@ -6,7 +6,7 @@
   //    function(success) { $scope.payments.splice(success.data.data._key, 1); },
   //    function(error) { $scope.pageSettings.error = error.data.error; });
 
-  define("DEBUG", FALSE);
+  define("DEBUG", TRUE);
 
   function debugOutput(string $line){
     if (DEBUG) {
@@ -53,7 +53,7 @@
   if ($jsonObject == NULL) {
     die("Could not decode JSON object.");
   }
-  debugVarDump($jsonObject);
+  debugVarDump($jsonObject, "<br>");
   if (!array_key_exists("action", $jsonObject) || ($jsonObject["action"] == NULL)) {
     die("Wrong structure of JSON object.");
   }
@@ -70,21 +70,30 @@
   } 
   debugOutput("Connected to the database.<br>");
 
+  // sanitize JSON object
+  foreach ($jsonObject as $jsonKey => $jsonValue) {
+    debugOutput("sanitized: '" . $jsonKey . "' => '" . $jsonValue . "' to '" . $conn->real_escape_string($jsonValue) . "'<br>");
+    $jsonObject[$jsonKey] = $conn->real_escape_string($jsonValue);
+  }
+
   // REQUESTS
   $finalRequestResult = [];
   switch ($jsonObject["action"]) {
     // getGroups : [kid/gid]
     case 'getGroups':
+      // find group with a certain child by 'kid'
       if (array_key_exists("kid", $jsonObject)) {
-        $reqResult = $conn->query("SELECT g.* FROM groups g JOIN group_assignments a ON g.gid=a.gid JOIN kids k ON a.kid=k.kid WHERE k.kid=" . $conn->real_escape_string($jsonObject["kid"]));
+        $reqResult = $conn->query("SELECT g.* FROM groups g JOIN group_assignments a ON g.gid=a.gid JOIN kids k ON a.kid=k.kid WHERE k.kid=" . $jsonObject["kid"]);
         $finalRequestResult = $reqResult->fetch_assoc();
       }
+      // find a specific group by 'gid'
       if (array_key_exists("gid", $jsonObject)) {
-        $reqResult = $conn->query("SELECT * FROM groups WHERE gid=" . $conn->real_escape_string($jsonObject["gid"]));
+        $reqResult = $conn->query("SELECT * FROM groups WHERE gid=" . $jsonObject["gid"]);
         $finalRequestResult = $reqResult->fetch_assoc();
       }
+      // get all groups (either just active ones or all)
       if (!array_key_exists("kid", $jsonObject) && !array_key_exists("gid", $jsonObject)) {
-        $reqResult = $conn->query("SELECT * FROM groups" . (array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1");
+        $reqResult = $conn->query("SELECT * FROM groups" . ((array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1"));
         while ($row = $reqResult->fetch_assoc()) {
           $finalRequestResult[] = $row;
         }
@@ -92,16 +101,21 @@
       break;
     // getKids : [kid/gid]
     case 'getKids':
+      // get all children from a certain group by 'gid'
       if (array_key_exists("gid", $jsonObject)) {
-        $reqResult = $conn->query("SELECT k.* FROM groups g JOIN group_assignments a ON g.gid=a.gid JOIN kids k ON a.kid=k.kid WHERE g.gid=" . $conn->real_escape_string($jsonObject["gid"]));
-        $finalRequestResult = $reqResult->fetch_assoc();
+        $reqResult = $conn->query("SELECT k.* FROM groups g JOIN group_assignments a ON g.gid=a.gid JOIN kids k ON a.kid=k.kid WHERE g.gid=" . $jsonObject["gid"]);
+        while ($row = $reqResult->fetch_assoc()) {
+          $finalRequestResult[] = $row;
+        }
       }
+      // get a certain child by 'kid'
       if (array_key_exists("kid", $jsonObject)) {
-        $reqResult  = $conn->query("SELECT * FROM kids WHERE kid=" . $conn->real_escape_string($jsonObject["kid"]));
+        $reqResult  = $conn->query("SELECT * FROM kids WHERE kid=" . $jsonObject["kid"]);
         $finalRequestResult = $reqResult->fetch_assoc();
       }
+      // get all children (either just active ones or all)
       if (!array_key_exists("kid", $jsonObject) && !array_key_exists("gid", $jsonObject)) {
-        $reqResult = $conn->query("SELECT * FROM kids" . (array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1");
+        $reqResult = $conn->query("SELECT * FROM kids" . ((array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1"));
         while ($row = $reqResult->fetch_assoc()) {
           $finalRequestResult[] = $row;
         }
@@ -109,6 +123,7 @@
       break;
     // getCurrentAssignments : -
     case 'getCurrentAssignments':
+      // will return all kids that are currently assigned to any group
       $reqResult = $conn->query("SELECT a.* FROM group_assignments a JOIN kids k ON a.kid=k.kid JOIN groups g ON a.gid=g.gid WHERE a.end IS NULL");
       while ($row = $reqResult->fetch_assoc()) {
         $finalRequestResult[] = $row;
@@ -116,12 +131,15 @@
       break;
     // getAssignments
     case 'getAssignments':
+      // will return all kids that were assigned in a certain time frame (if 'gid' is given only a specific group is searched)
       if (array_key_exists("start", $jsonObject) && array_key_exists("end", $jsonObject)) {
-        // WHERE expires_at <= STR_TO_DATE('2010-10-15 10:00:00', '%Y-%m-%d %H:%i:%s')
-        $saneStart = $conn->real_escape_string($jsonObject["start"]);
-        $saneEnd = $conn->real_escape_string($jsonObject["end"]);
-        // assignment either envelops 'start' or 'end' .. or lies completely between them .. or is still open and began before 'end'
-        $reqResult = $conn->query("SELECT a.* FROM group_assignments a JOIN kids k ON a.kid=k.kid JOIN groups g ON a.gid=g.gid WHERE ((a.start <= STR_TO_DATE('" . $saneStart . "', '%Y-%m-%d %H:%i:%s')) AND (a.end >= STR_TO_DATE('" . $saneStart . "', '%Y-%m-%d %H:%i:%s'))) OR ((a.start <= STR_TO_DATE('" . $saneEnd . "', '%Y-%m-%d %H:%i:%s')) AND (a.end >= STR_TO_DATE('" . $saneEnd . "', '%Y-%m-%d %H:%i:%s'))) OR ((a.start >= STR_TO_DATE('" . $saneStart . "', '%Y-%m-%d %H:%i:%s')) AND (a.end <= STR_TO_DATE('" . $saneEnd . "', '%Y-%m-%d %H:%i:%s'))) OR ((a.start <= STR_TO_DATE('" . $saneEnd . "', '%Y-%m-%d %H:%i:%s')) AND a.end IS NULL)");
+        // assignment either surrounds 'start' or 'end' .. or lies completely between them .. or is still open and began before 'end'
+        $assignmentStartSurrounded = "((a.start <= STR_TO_DATE('" . $jsonObject["start"] . "', '%Y-%m-%d %H:%i:%s')) AND (a.end >= STR_TO_DATE('" . $jsonObject["start"] . "', '%Y-%m-%d %H:%i:%s')))";
+        $assignmentEndSurrounded = "((a.start <= STR_TO_DATE('" . $jsonObject["end"] . "', '%Y-%m-%d %H:%i:%s')) AND (a.end >= STR_TO_DATE('" . $jsonObject["end"] . "', '%Y-%m-%d %H:%i:%s')))";
+        $assignmentIsSurrounded = "((a.start >= STR_TO_DATE('" . $jsonObject["start"] . "', '%Y-%m-%d %H:%i:%s')) AND (a.end <= STR_TO_DATE('" . $jsonObject["end"] . "', '%Y-%m-%d %H:%i:%s')))";
+        $assignmentStartedInside = "((a.start <= STR_TO_DATE('" . $jsonObject["end"] . "', '%Y-%m-%d %H:%i:%s')) AND a.end IS NULL)";
+        $reqResult = $conn->query("SELECT a.* FROM group_assignments a JOIN kids k ON a.kid=k.kid JOIN groups g ON a.gid=g.gid WHERE (" . $assignmentStartSurrounded . " OR " . $assignmentEndSurrounded
+            . " OR " . $assignmentIsSurrounded . " OR " . $assignmentStartedInside . ")" . (array_key_exists("gid", $jsonObject) ? (" AND g.gid=" . $jsonObject["gid"]) : ""));
         while ($row = $reqResult->fetch_assoc()) {
           $finalRequestResult[] = $row;
         }
@@ -145,12 +163,12 @@
     // createGroup : auth, name, comment
     case 'createGroup':
       // check auth
-      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $conn->real_escape_string($jsonObject["auth"]) . "'")->num_rows == 0)) {
+      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
         $finalRequestResult = array("error" => "Authorisation failed.");
       } else {
         // request
         if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-          if ($conn->query("INSERT INTO groups (name, comment) VALUES ('" . $conn->real_escape_string($jsonObject["name"]) . "', '" . $conn->real_escape_string($jsonObject["comment"]) . "')")) {
+          if ($conn->query("INSERT INTO groups (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
             $finalRequestResult = array("success" => "Group successfully added.");
           } else {
             $finalRequestResult = array("error" => "Group could not be added. Reason: " . $conn->error);
@@ -163,12 +181,12 @@
     // updateGroup : auth, gid, name, comment
     case 'updateGroup':
       // check auth
-      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $conn->real_escape_string($jsonObject["auth"]) . "'")->num_rows == 0)) {
+      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
         $finalRequestResult = array("error" => "Authorisation failed.");
       } else {
         // request
         if (array_key_exists("gid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-          if ($conn->query("UPDATE groups SET name='" . $conn->real_escape_string($jsonObject["name"]) . "', comment='" . $conn->real_escape_string($jsonObject["comment"]) . "' WHERE gid=" . $conn->real_escape_string($jsonObject["gid"]))) {
+          if ($conn->query("UPDATE groups SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE gid=" . $jsonObject["gid"])) {
             $finalRequestResult = array("success" => "Group successfully updated.");
           } else {
             $finalRequestResult = array("error" => "Group could not be updated. Reason: " . $conn->error);
@@ -181,12 +199,12 @@
     // deleteGroup : auth, gid
     case 'deleteGroup':
       // check auth
-      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $conn->real_escape_string($jsonObject["auth"]) . "'")->num_rows == 0)) {
+      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
         $finalRequestResult = array("error" => "Authorisation failed.");
       } else {
         // request
         if (array_key_exists("gid", $jsonObject)) {
-          if ($conn->query("UPDATE groups SET active=0 WHERE gid=" . $conn->real_escape_string($jsonObject["gid"]))) {
+          if ($conn->query("UPDATE groups SET active=0 WHERE gid=" . $jsonObject["gid"])) {
             $finalRequestResult = array("success" => "Group successfully removed.");
           } else {
             $finalRequestResult = array("error" => "Group could not be removed. Reason: " . $conn->error);
@@ -199,12 +217,12 @@
     // createKid : auth, name, comment
     case 'createKid':
       // check auth
-      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $conn->real_escape_string($jsonObject["auth"]) . "'")->num_rows == 0)) {
+      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
         $finalRequestResult = array("error" => "Authorisation failed.");
       } else {
         // request
         if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-          if ($conn->query("INSERT INTO kids (name, comment) VALUES ('" . $conn->real_escape_string($jsonObject["name"]) . "', '" . $conn->real_escape_string($jsonObject["comment"]) . "')")) {
+          if ($conn->query("INSERT INTO kids (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
             $finalRequestResult = array("success" => "Kid successfully added.");
           } else {
             $finalRequestResult = array("error" => "Kid could not be added. Reason: " . $conn->error);
@@ -217,12 +235,12 @@
     // updateKid : auth, kid, name, comment
     case 'updateKid':
       // check auth
-      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $conn->real_escape_string($jsonObject["auth"]) . "'")->num_rows == 0)) {
+      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
         $finalRequestResult = array("error" => "Authorisation failed.");
       } else {
         // request
         if (array_key_exists("kid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-          if ($conn->query("UPDATE kids SET name='" . $conn->real_escape_string($jsonObject["name"]) . "', comment='" . $conn->real_escape_string($jsonObject["comment"]) . "' WHERE kid=" . $conn->real_escape_string($jsonObject["kid"]))) {
+          if ($conn->query("UPDATE kids SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE kid=" . $jsonObject["kid"])) {
             $finalRequestResult = array("success" => "Kid successfully updated.");
           } else {
             $finalRequestResult = array("error" => "Kid could not be updated. Reason: " . $conn->error);
@@ -235,12 +253,12 @@
     // deleteKid : auth, kid
     case 'deleteKid':
       // check auth
-      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $conn->real_escape_string($jsonObject["auth"]) . "'")->num_rows == 0)) {
+      if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
         $finalRequestResult = array("error" => "Authorisation failed.");
       } else {
         // request
         if (array_key_exists("kid", $jsonObject)) {
-          if ($conn->query("UPDATE kids SET active=0 WHERE kid=" . $conn->real_escape_string($jsonObject["kid"]))) {
+          if ($conn->query("UPDATE kids SET active=0 WHERE kid=" . $jsonObject["kid"])) {
             $finalRequestResult = array("success" => "Kid successfully removed.");
           } else {
             $finalRequestResult = array("error" => "Kid could not be removed. Reason: " . $conn->error);
@@ -254,7 +272,8 @@
     case 'moveKid':
       if (array_key_exists("kid", $jsonObject) && array_key_exists("gid", $jsonObject)) {
         // close old entries and create a new one
-        if ($conn->query("UPDATE group_assignments SET end=CURRENT_TIME() WHERE kid=" . $conn->real_escape_string($jsonObject["kid"]) . " AND end IS NULL") && $conn->query("INSERT INTO group_assignments (kid, gid, start) VALUES (" . $conn->real_escape_string($jsonObject["kid"]) . ", " . $conn->real_escape_string($jsonObject["gid"]) . ", CURRENT_TIME())")) {
+        if ($conn->query("UPDATE group_assignments SET end=CURRENT_TIME() WHERE kid=" . $jsonObject["kid"] . " AND end IS NULL") && $conn->query("INSERT INTO group_assignments (kid, gid, start) VALUES ("
+            . $jsonObject["kid"] . ", " . $jsonObject["gid"]) . ", CURRENT_TIME())") {
           $finalRequestResult = array("success" => "Kid successfully moved.");
         } else {
           $finalRequestResult = array("error" => "Kid could not be moved. Reason: " . $conn->error);
