@@ -6,16 +6,6 @@ SET time_zone = "+00:00";
 CREATE DATABASE IF NOT EXISTS `kita` DEFAULT CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 USE `kita`;
 
-DROP TABLE IF EXISTS `auth`;
-CREATE TABLE `auth` (
-  `role` varchar(20) NOT NULL,
-  `password` varchar(20) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=latin1;
-
-INSERT INTO `auth` (`role`, `password`) VALUES
-('adult', 'bar'),
-('kid', 'foo');
-
 DROP TABLE IF EXISTS `food`;
 CREATE TABLE `food` (
   `fid` int(11) NOT NULL,
@@ -35,7 +25,7 @@ CREATE TABLE `groups` (
   `name` varchar(100) NOT NULL,
   `comment` text NOT NULL,
   `image` varchar(500) NOT NULL,
-  `active` tinyint(1) NOT NULL
+  `active` tinyint(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 INSERT INTO `groups` (`gid`, `name`, `comment`, `image`, `active`) VALUES
@@ -66,12 +56,19 @@ CREATE TABLE `group_led_by` (
   `end` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
+INSERT INTO `group_led_by` (`lid`, `gid`, `tid`, `start`, `end`) VALUES
+(1, 2, 1, '2017-12-12 12:00:00', NULL);
+
 DROP TABLE IF EXISTS `images`;
 CREATE TABLE `images` (
   `iid` int(11) NOT NULL,
   `name` varchar(50) NOT NULL,
-  `comment` text NOT NULL
+  `comment` text NOT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
+
+INSERT INTO `images` (`iid`, `name`, `comment`, `active`) VALUES
+(1, '1234567890abcdef1234567890abcdef12345678', 'some test picture', 1);
 
 DROP TABLE IF EXISTS `image_depicts`;
 CREATE TABLE `image_depicts` (
@@ -84,10 +81,10 @@ CREATE TABLE `image_depicts` (
 DROP TABLE IF EXISTS `kids`;
 CREATE TABLE `kids` (
   `kid` int(11) NOT NULL,
-  `name` varchar(50) NOT NULL,
+  `name` varchar(100) NOT NULL,
   `comment` text NOT NULL,
   `image` varchar(500) NOT NULL,
-  `active` tinyint(1) NOT NULL
+  `active` tinyint(1) NOT NULL DEFAULT 1
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 INSERT INTO `kids` (`kid`, `name`, `comment`, `image`, `active`) VALUES
@@ -102,12 +99,13 @@ CREATE TABLE `teachers` (
   `name` varchar(100) NOT NULL,
   `comment` text NOT NULL,
   `image` varchar(500) NOT NULL,
-  `active` tinyint(1) NOT NULL
+  `active` tinyint(1) NOT NULL DEFAULT 1,
+  `pass` varchar(50) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
+INSERT INTO `teachers` (`tid`, `name`, `comment`, `image`, `active`, `pass`) VALUES
+(1, 'Bob der Meister', '', '', 1, '*F3A2A51A9B0F2BE2468926B4132313728C250DBF');
 
-ALTER TABLE `auth`
-  ADD PRIMARY KEY (`role`);
 
 ALTER TABLE `food`
   ADD PRIMARY KEY (`fid`);
@@ -155,15 +153,15 @@ ALTER TABLE `groups`
 ALTER TABLE `group_assigned_to`
   MODIFY `aid` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 ALTER TABLE `group_led_by`
-  MODIFY `lid` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `lid` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 ALTER TABLE `images`
-  MODIFY `iid` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `iid` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 ALTER TABLE `image_depicts`
   MODIFY `did` int(11) NOT NULL AUTO_INCREMENT;
 ALTER TABLE `kids`
   MODIFY `kid` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 ALTER TABLE `teachers`
-  MODIFY `tid` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `tid` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 ALTER TABLE `food_problematic_for`
   ADD CONSTRAINT `FKEY_INTO_FOODS` FOREIGN KEY (`fid`) REFERENCES `food` (`fid`),

@@ -6,7 +6,7 @@
 //    function(success) { $scope.payments.splice(success.data.data._key, 1); },
 //    function(error) { $scope.pageSettings.error = error.data.error; });
 
-define("DEBUG", TRUE);
+define("DEBUG", FALSE);
 
 function debugOutput(string $line)
 {
@@ -47,17 +47,17 @@ if (isset($parsedRequestUrl["query"])) {
 
 // check decoded parameter
 if ($jsonString == "") {
-  die("Could not decoded parameters.");
+  die(json_encode(array("error" => "Could not decoded parameters.")));
 }
 
 // try to read JSON object
 $jsonObject = json_decode($jsonString, TRUE);
 if ($jsonObject == NULL) {
-  die("Could not decode JSON object.");
+  die(json_encode(array("error" => "Could not decode JSON object.")));
 }
 debugVarDump($jsonObject, "<br>");
 if (!array_key_exists("action", $jsonObject) || ($jsonObject["action"] == NULL)) {
-  die("Wrong structure of JSON object.");
+  die(json_encode(array("error" => "Wrong structure of JSON object.")));
 }
 
 $dbHost = "localhost";
@@ -68,7 +68,7 @@ $dbName = "kita";
 // build database connection
 $conn = new mysqli($dbHost, $dbUser, $dbPassword, $dbName);
 if ($conn->connect_error) {
-  die("ERROR: Unable to connect: " . $conn->connect_error);
+  die(json_encode(array("error" => "Unable to connect to database: " . $conn->connect_error)));
 }
 debugOutput("Connected to the database.<br>");
 
@@ -78,75 +78,142 @@ foreach ($jsonObject as $jsonKey => $jsonValue) {
   $jsonObject[$jsonKey] = $conn->real_escape_string($jsonValue);
 }
 
+// establish authorization
+if (!array_key_exists("authName", $jsonObject) || !array_key_exists("authPass", $jsonObject) || ($conn->query("SELECT * FROM teachers WHERE name='" . $jsonObject["authName"] . "' AND pass=PASSWORD('" . $jsonObject["authPass"] . "') AND active=1")->num_rows == 0)) {
+  die(json_encode(array("error" => "Authorisation failed.")));
+}
+
 // REQUESTS
 $finalRequestResult = [];
 switch ($jsonObject["action"]) {
-  // getGroups : [gid/kid]
+  // getGroups : [gid/kid/tid/iid]
   case 'getGroups':
-    // find a specific group by 'gid'
+    // get group using the 'gid'
     if (array_key_exists("gid", $jsonObject)) {
       $reqResult = $conn->query("SELECT * FROM groups WHERE gid=" . $jsonObject["gid"]);
       $finalRequestResult = $reqResult->fetch_assoc();
     }
-    // find group with a certain child by 'kid'
+    // get group with a certain child using the 'kid'
     if (array_key_exists("kid", $jsonObject)) {
-      $reqResult = $conn->query("SELECT g.* FROM groups g JOIN group_assigned_to a ON g.gid=a.gid JOIN kids k ON a.kid=k.kid WHERE k.kid=" . $jsonObject["kid"]);
+      $reqResult = $conn->query("SELECT g.* FROM groups g JOIN group_assigned_to a ON g.gid=a.gid WHERE a.kid=" . $jsonObject["kid"]);
       $finalRequestResult = $reqResult->fetch_assoc();
     }
-    // get all groups (either just active ones or all)
-    if (!array_key_exists("kid", $jsonObject) && !array_key_exists("gid", $jsonObject)) {
-      $reqResult = $conn->query("SELECT * FROM groups" . ( (array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1"));
+    // get group led by a certain teacher using the 'tid'
+    if (array_key_exists("tid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT g.* FROM groups g JOIN group_led_by l ON g.gid=l.gid WHERE l.tid=" . $jsonObject["tid"]);
+      $finalRequestResult = $reqResult->fetch_assoc();
+    }
+    // get group depicted in a certain image using the 'iid'
+    if (array_key_exists("iid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT g.* FROM groups g JOIN image_depicts d ON g.gid=d.gid WHERE d.iid=" . $jsonObject["iid"]);
+      $finalRequestResult = $reqResult->fetch_assoc();
+    }
+    // get all (active) groups
+    if (!array_key_exists("gid", $jsonObject) && !array_key_exists("kid", $jsonObject) && !array_key_exists("tid", $jsonObject) && !array_key_exists("iid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT * FROM groups WHERE active=1");
       while ($row = $reqResult->fetch_assoc()) {
         $finalRequestResult[] = $row;
       }
     }
     break;
-  // getKids : [kid/gid]
+  // getKids : [kid/gid/tid/iid/fid]
   case 'getKids':
-    // get all children from a certain group by 'gid'
-    if (array_key_exists("gid", $jsonObject)) {
-      $reqResult = $conn->query("SELECT k.* FROM groups g JOIN group_assigned_to a ON g.gid=a.gid JOIN kids k ON a.kid=k.kid WHERE g.gid=" . $jsonObject["gid"]);
-      while ($row = $reqResult->fetch_assoc()) {
-        $finalRequestResult[] = $row;
-      }
-    }
-    // get a certain child by 'kid'
+    // get child using the 'kid'
     if (array_key_exists("kid", $jsonObject)) {
       $reqResult = $conn->query("SELECT * FROM kids WHERE kid=" . $jsonObject["kid"]);
       $finalRequestResult = $reqResult->fetch_assoc();
     }
-    // get all children (either just active ones or all)
-    if (!array_key_exists("kid", $jsonObject) && !array_key_exists("gid", $jsonObject)) {
-      $reqResult = $conn->query("SELECT * FROM kids" . ( (array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1"));
+    // get children from a certain group using the 'gid'
+    if (array_key_exists("gid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT k.* FROM kids k JOIN group_assigned_to a ON k.kid=a.kid WHERE a.gid=" . $jsonObject["gid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get children from a group led by a certain teacher using the 'tid'
+    if (array_key_exists("tid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT k.* FROM kids k JOIN group_assigned_to a ON k.kid=a.kid JOIN group_led_by l ON a.gid=l.gid WHERE l.tid=" . $jsonObject["tid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get children depicted in a certain image using the 'iid'
+    if (array_key_exists("iid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT k.* FROM kids k JOIN image_depicts d ON k.kid=d.kid WHERE d.iid=" . $jsonObject["iid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get children having a certain food problem using the 'fid'
+    if (array_key_exists("fid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT k.* FROM kids k JOIN food_problematic_for p ON k.kid=p.kid WHERE p.fid=" . $jsonObject["fid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get all (active) children
+    if (!array_key_exists("kid", $jsonObject) && !array_key_exists("gid", $jsonObject) && !array_key_exists("tid", $jsonObject) && !array_key_exists("iid", $jsonObject) && !array_key_exists("fid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT * FROM kids WHERE active=1");
       while ($row = $reqResult->fetch_assoc()) {
         $finalRequestResult[] = $row;
       }
     }
     break;
-  // getTeachers : [tid/gid]
+  // getTeachers : [tid/gid/kid]
   case 'getTeachers':
-    // get all teachers from a certain group by 'gid'
-    if (array_key_exists("gid", $jsonObject)) {
-      $reqResult = $conn->query("SELECT t.* FROM groups g JOIN group_led_by l ON g.gid=l.gid JOIN teachers t ON l.tid=t.tid WHERE g.gid=" . $jsonObject["gid"]);
-      while ($row = $reqResult->fetch_assoc()) {
-        $finalRequestResult[] = $row;
-      }
-    }
-    // get a certain teacher by 'tid'
+    // get teacher using the 'tid'
     if (array_key_exists("tid", $jsonObject)) {
       $reqResult = $conn->query("SELECT * FROM teachers WHERE tid=" . $jsonObject["tid"]);
       $finalRequestResult = $reqResult->fetch_assoc();
     }
-    // get all teachers (either just active ones or all)
-    if (!array_key_exists("tid", $jsonObject) && !array_key_exists("gid", $jsonObject)) {
-      $reqResult = $conn->query("SELECT * FROM teachers" . ( (array_key_exists("all", $jsonObject) && strcasecmp($jsonObject["all"], "true")) ? "" : " WHERE active=1"));
+    // get teachers from a certain group using the 'gid'
+    if (array_key_exists("gid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT t.* FROM teachers t JOIN group_led_by l ON t.tid=l.tid WHERE l.gid=" . $jsonObject["gid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get teachers leading the the group of a certain child using the 'kid'
+    if (array_key_exists("kid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT t.* FROM teachers t JOIN group_led_by l ON t.tid=l.tid JOIN group_assigned_to a ON l.gid=a.gid WHERE a.kid=" . $jsonObject["kid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get all (active) teachers
+    if (!array_key_exists("tid", $jsonObject) && !array_key_exists("gid", $jsonObject) && !array_key_exists("kid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT * FROM teachers WHERE active=1");
       while ($row = $reqResult->fetch_assoc()) {
         $finalRequestResult[] = $row;
       }
     }
     break;
-  // getCurrentAssignments : -
-  case 'getCurrentAssignments':
+  // getImages : [kid/gid]
+  case 'getImages':
+    // get images depicting a certain child using the 'kid'
+    if (array_key_exists("kid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT i.* FROM images i JOIN image_depicts d ON i.iid=d.iid WHERE d.kid=" . $jsonObject["kid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get images depicting a certain group using the 'gid'
+    if (array_key_exists("gid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT i.* FROM images i JOIN image_depicts d ON i.iid=d.iid WHERE d.gid=" . $jsonObject["gid"]);
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    // get all (active) images
+    if (!array_key_exists("kid", $jsonObject) && !array_key_exists("gid", $jsonObject)) {
+      $reqResult = $conn->query("SELECT * FROM images WHERE active=1");
+      while ($row = $reqResult->fetch_assoc()) {
+        $finalRequestResult[] = $row;
+      }
+    }
+    break;
+  // getCurrentAssignees : -
+  case 'getCurrentAssignees':
     // will return all kids that are currently assigned to any group
     $reqResult = $conn->query("SELECT a.* FROM group_assigned_to a JOIN kids k ON a.kid=k.kid JOIN groups g ON a.gid=g.gid WHERE a.end IS NULL");
     while ($row = $reqResult->fetch_assoc()) {
@@ -161,7 +228,7 @@ switch ($jsonObject["action"]) {
       $finalRequestResult[] = $row;
     }
     break;
-  // getAssignments : start, end (datetimes)
+  // getAssignments : start,end
   case 'getAssignments':
     // will return all kids that were assigned in a certain time frame (if 'gid' is given only a specific group is searched)
     if (array_key_exists("start", $jsonObject) && array_key_exists("end", $jsonObject)) {
@@ -181,195 +248,149 @@ switch ($jsonObject["action"]) {
     break;
   // getEmptyGroups : -
   case 'getEmptyGroups':
-    $reqResult = $conn->query("SELECT g.gid FROM groups g LEFT OUTER JOIN group_assigned_to a ON g.gid=a.gid WHERE a.gid IS NULL");
+    $reqResult = $conn->query("SELECT g.* FROM groups g LEFT OUTER JOIN group_assigned_to a ON g.gid=a.gid WHERE a.gid IS NULL");
     while ($row = $reqResult->fetch_assoc()) {
       $finalRequestResult[] = $row;
     }
     break;
   // getHeadlessGroups : -
   case 'getHeadlessGroups':
-    $reqResult = $conn->query("SELECT g.gid FROM groups g LEFT OUTER JOIN group_led_by l ON g.gid=l.gid WHERE l.gid IS NULL");
+    $reqResult = $conn->query("SELECT g.* FROM groups g LEFT OUTER JOIN group_led_by l ON g.gid=l.gid WHERE l.gid IS NULL");
     while ($row = $reqResult->fetch_assoc()) {
       $finalRequestResult[] = $row;
     }
     break;
   // getUnassignedKids : -
   case 'getUnassignedKids':
-    $reqResult = $conn->query("SELECT k.kid FROM kids k LEFT OUTER JOIN group_assigned_to a ON k.kid=a.kid WHERE a.kid IS NULL");
+    $reqResult = $conn->query("SELECT k.* FROM kids k LEFT OUTER JOIN group_assigned_to a ON k.kid=a.kid WHERE a.kid IS NULL");
     while ($row = $reqResult->fetch_assoc()) {
       $finalRequestResult[] = $row;
     }
     break;
   // getBoredTeachers : -
   case 'getBoredTeachers':
-    $reqResult = $conn->query("SELECT t.tid FROM teachers t LEFT OUTER JOIN group_led_by l ON t.tid=l.tid WHERE t.kid IS NULL");
+    $reqResult = $conn->query("SELECT t.* FROM teachers t LEFT OUTER JOIN group_led_by l ON t.tid=l.tid WHERE t.kid IS NULL");
     while ($row = $reqResult->fetch_assoc()) {
       $finalRequestResult[] = $row;
     }
     break;
-  // createGroup : auth, name, comment
+  // getUndescribedImages : -
+  case 'getUndescribedImages':
+    $reqResult = $conn->query("SELECT i.* FROM images i LEFT OUTER JOIN image_depicts d ON i.iid=d.iid WHERE d.kid IS NULL AND d.gid IS NULL");
+    while ($row = $reqResult->fetch_assoc()) {
+      $finalRequestResult[] = $row;
+    }
+    break;
+  // createGroup : name, comment
   case 'createGroup':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-        if ($conn->query("INSERT INTO groups (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
-          $finalRequestResult = array("success" => "Group successfully added.");
-        } else {
-          $finalRequestResult = array("error" => "Group could not be added. Reason: " . $conn->error);
-        }
+    // TODO: from here; add image; change image type in DB etc
+    if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
+      if ($conn->query("INSERT INTO groups (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
+        $finalRequestResult = array("success" => "Group successfully added.");
       } else {
-        $finalRequestResult = array("error" => "Group not created because of missing details.");
+        $finalRequestResult = array("error" => "Group could not be added. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Group not created because of missing details.");
     }
     break;
-  // updateGroup : auth, gid, name, comment
+  // updateGroup : gid, name, comment
   case 'updateGroup':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("gid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-        if ($conn->query("UPDATE groups SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE gid=" . $jsonObject["gid"])) {
-          $finalRequestResult = array("success" => "Group successfully updated.");
-        } else {
-          $finalRequestResult = array("error" => "Group could not be updated. Reason: " . $conn->error);
-        }
+    if (array_key_exists("gid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
+      if ($conn->query("UPDATE groups SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE gid=" . $jsonObject["gid"])) {
+        $finalRequestResult = array("success" => "Group successfully updated.");
       } else {
-        $finalRequestResult = array("error" => "Group not updated because of missing details.");
+        $finalRequestResult = array("error" => "Group could not be updated. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Group not updated because of missing details.");
     }
     break;
-  // deleteGroup : auth, gid
+  // deleteGroup : gid
   case 'deleteGroup':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("gid", $jsonObject)) {
-        if ($conn->query("UPDATE groups SET active=0 WHERE gid=" . $jsonObject["gid"])) {
-          $finalRequestResult = array("success" => "Group successfully removed.");
-        } else {
-          $finalRequestResult = array("error" => "Group could not be removed. Reason: " . $conn->error);
-        }
+    if (array_key_exists("gid", $jsonObject)) {
+      if ($conn->query("UPDATE groups SET active=0 WHERE gid=" . $jsonObject["gid"])) {
+        $finalRequestResult = array("success" => "Group successfully removed.");
       } else {
-        $finalRequestResult = array("error" => "Group not removed because of missing details.");
+        $finalRequestResult = array("error" => "Group could not be removed. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Group not removed because of missing details.");
     }
     break;
-  // createKid : auth, name, comment
+  // createKid : name, comment
   case 'createKid':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-        if ($conn->query("INSERT INTO kids (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
-          $finalRequestResult = array("success" => "Kid successfully added.");
-        } else {
-          $finalRequestResult = array("error" => "Kid could not be added. Reason: " . $conn->error);
-        }
+    if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
+      if ($conn->query("INSERT INTO kids (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
+        $finalRequestResult = array("success" => "Kid successfully added.");
       } else {
-        $finalRequestResult = array("error" => "Kid not created because of missing details.");
+        $finalRequestResult = array("error" => "Kid could not be added. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Kid not created because of missing details.");
     }
     break;
-  // updateKid : auth, kid, name, comment
+  // updateKid : kid, name, comment
   case 'updateKid':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("kid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-        if ($conn->query("UPDATE kids SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE kid=" . $jsonObject["kid"])) {
-          $finalRequestResult = array("success" => "Kid successfully updated.");
-        } else {
-          $finalRequestResult = array("error" => "Kid could not be updated. Reason: " . $conn->error);
-        }
+    if (array_key_exists("kid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
+      if ($conn->query("UPDATE kids SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE kid=" . $jsonObject["kid"])) {
+        $finalRequestResult = array("success" => "Kid successfully updated.");
       } else {
-        $finalRequestResult = array("error" => "Kid not updated because of missing details.");
+        $finalRequestResult = array("error" => "Kid could not be updated. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Kid not updated because of missing details.");
     }
     break;
-  // deleteKid : auth, kid
+  // deleteKid : kid
   case 'deleteKid':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("kid", $jsonObject)) {
-        if ($conn->query("UPDATE kids SET active=0 WHERE kid=" . $jsonObject["kid"])) {
-          $finalRequestResult = array("success" => "Kid successfully removed.");
-        } else {
-          $finalRequestResult = array("error" => "Kid could not be removed. Reason: " . $conn->error);
-        }
+    if (array_key_exists("kid", $jsonObject)) {
+      if ($conn->query("UPDATE kids SET active=0 WHERE kid=" . $jsonObject["kid"])) {
+        $finalRequestResult = array("success" => "Kid successfully removed.");
       } else {
-        $finalRequestResult = array("error" => "Kid not removed because of missing details.");
+        $finalRequestResult = array("error" => "Kid could not be removed. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Kid not removed because of missing details.");
     }
     break;
-  // createTeacher : auth, name, comment
+  // createTeacher : name, comment
   case 'createTeacher':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-        if ($conn->query("INSERT INTO teachers (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
-          $finalRequestResult = array("success" => "Teacher successfully added.");
-        } else {
-          $finalRequestResult = array("error" => "Teacher could not be added. Reason: " . $conn->error);
-        }
+    if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
+      if ($conn->query("INSERT INTO teachers (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
+        $finalRequestResult = array("success" => "Teacher successfully added.");
       } else {
-        $finalRequestResult = array("error" => "Teacher not created because of missing details.");
+        $finalRequestResult = array("error" => "Teacher could not be added. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Teacher not created because of missing details.");
     }
     break;
-  // updateTeacher : auth, tid, name, comment
+  // updateTeacher : tid, name, comment
   case 'updateTeacher':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("tid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
-        if ($conn->query("UPDATE teachers SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE tid=" . $jsonObject["tid"])) {
-          $finalRequestResult = array("success" => "Teacher successfully updated.");
-        } else {
-          $finalRequestResult = array("error" => "Teacher could not be updated. Reason: " . $conn->error);
-        }
+    if (array_key_exists("tid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
+      if ($conn->query("UPDATE teachers SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE tid=" . $jsonObject["tid"])) {
+        $finalRequestResult = array("success" => "Teacher successfully updated.");
       } else {
-        $finalRequestResult = array("error" => "Teacher not updated because of missing details.");
+        $finalRequestResult = array("error" => "Teacher could not be updated. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Teacher not updated because of missing details.");
     }
     break;
-  // deleteTeacher : auth, tid
+  // deleteTeacher : tid
   case 'deleteTeacher':
-    // check auth
-    if (!array_key_exists("auth", $jsonObject) || ($conn->query("SELECT * FROM auth WHERE role='adult' AND password='" . $jsonObject["auth"] . "'")->num_rows == 0)) {
-      $finalRequestResult = array("error" => "Authorisation failed.");
-    } else {
-      // request
-      if (array_key_exists("tid", $jsonObject)) {
-        if ($conn->query("UPDATE teachers SET active=0 WHERE tid=" . $jsonObject["tid"])) {
-          $finalRequestResult = array("success" => "Teacher successfully removed.");
-        } else {
-          $finalRequestResult = array("error" => "Teacher could not be removed. Reason: " . $conn->error);
-        }
+    if (array_key_exists("tid", $jsonObject)) {
+      if ($conn->query("UPDATE teachers SET active=0 WHERE tid=" . $jsonObject["tid"])) {
+        $finalRequestResult = array("success" => "Teacher successfully removed.");
       } else {
-        $finalRequestResult = array("error" => "Teacher not removed because of missing details.");
+        $finalRequestResult = array("error" => "Teacher could not be removed. Reason: " . $conn->error);
       }
+    } else {
+      $finalRequestResult = array("error" => "Teacher not removed because of missing details.");
     }
     break;
-  // assignKid : auth, kid, gid
+  // assignKid : kid, gid
   case 'assignKid':
     if (array_key_exists("kid", $jsonObject) && array_key_exists("gid", $jsonObject)) {
       // close old entries and create a new one
@@ -383,7 +404,7 @@ switch ($jsonObject["action"]) {
       $finalRequestResult = array("error" => "Kid not assigned because of missing details.");
     }
     break;
-  // assignTeacher : auth, tid, gid
+  // assignTeacher : tid, gid
   case 'assignTeacher':
     if (array_key_exists("tid", $jsonObject) && array_key_exists("gid", $jsonObject)) {
       // close old entries and create a new one
