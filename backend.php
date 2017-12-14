@@ -6,12 +6,12 @@
 //    function(success) { $scope.payments.splice(success.data.data._key, 1); },
 //    function(error) { $scope.pageSettings.error = error.data.error; });
 
-define("DEBUG", FALSE);
+define("DEBUG", TRUE);
 
 function debugOutput(string $line)
 {
   if (DEBUG) {
-    echo $line;
+    echo $line . "<br>";
   }
 }
 
@@ -24,6 +24,10 @@ function debugVarDump($var, string $add = "")
     echo $output . $add;
   }
 }
+
+debugVarDump($_POST, "<br>");
+debugVarDump($_FILES['avatarFile'], "<br>");
+debugOutput(sha1_file($_FILES['avatarFile']['tmp_name']));
 
 // get DATA parameter from URL and decode BASE64 encoding
 $requestUrl = (isset($_SERVER["HTTPS"]) ? "https" : "http") . "://$_SERVER[HTTP_HOST]$_SERVER[REQUEST_URI]";
@@ -79,7 +83,8 @@ foreach ($jsonObject as $jsonKey => $jsonValue) {
 }
 
 // establish authorization
-if (!array_key_exists("authName", $jsonObject) || !array_key_exists("authPass", $jsonObject) || ($conn->query("SELECT * FROM teachers WHERE name='" . $jsonObject["authName"] . "' AND pass=PASSWORD('" . $jsonObject["authPass"] . "') AND active=1")->num_rows == 0)) {
+if (!array_key_exists("authName", $jsonObject) || !array_key_exists("authPass", $jsonObject)
+  || ($conn->query("SELECT * FROM teachers WHERE name='" . $jsonObject["authName"] . "' AND pass=PASSWORD('" . $jsonObject["authPass"] . "') AND active=1")->num_rows == 0)) {
   die(json_encode(array("error" => "Authorisation failed.")));
 }
 
@@ -228,7 +233,7 @@ switch ($jsonObject["action"]) {
       $finalRequestResult[] = $row;
     }
     break;
-  // getAssignments : start,end
+  // getAssignments : start, end
   case 'getAssignments':
     // will return all kids that were assigned in a certain time frame (if 'gid' is given only a specific group is searched)
     if (array_key_exists("start", $jsonObject) && array_key_exists("end", $jsonObject)) {
@@ -281,9 +286,9 @@ switch ($jsonObject["action"]) {
       $finalRequestResult[] = $row;
     }
     break;
-  // createGroup : name, comment
+  // createGroup : name, comment, [avatarSha]
+  // TODO: setup POST form and process image
   case 'createGroup':
-    // TODO: from here; add image; change image type in DB etc
     if (array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
       if ($conn->query("INSERT INTO groups (name, comment) VALUES ('" . $jsonObject["name"] . "', '" . $jsonObject["comment"] . "')")) {
         $finalRequestResult = array("success" => "Group successfully added.");
@@ -294,7 +299,7 @@ switch ($jsonObject["action"]) {
       $finalRequestResult = array("error" => "Group not created because of missing details.");
     }
     break;
-  // updateGroup : gid, name, comment
+  // updateGroup : gid, name, comment, [avatarSha]
   case 'updateGroup':
     if (array_key_exists("gid", $jsonObject) && array_key_exists("name", $jsonObject) && array_key_exists("comment", $jsonObject)) {
       if ($conn->query("UPDATE groups SET name='" . $jsonObject["name"] . "', comment='" . $jsonObject["comment"] . "' WHERE gid=" . $jsonObject["gid"])) {

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<HTML lang="en">
+
+<HEAD>
+    <META charset="utf-8">
+    <TITLE>Mandala WebApp</TITLE>
+</HEAD>
+
+<BODY>
+    Hello world!
+    <BR>
+
+    <FORM action="backend.php" method="POST" enctype="multipart/form-data">
+        <INPUT type="hidden" name="foo" value="bar">
+        <INPUT type="hidden" name="MAX_FILE_SIZE" value="500000">
+        <LABEL>Choose image file:
+            <INPUT name="avatarFile" type="file" accept="image/*">
+        </LABEL>
+        <BUTTON>Upload!</BUTTON>
+    </FORM>
+
+    <SCRIPT>
+        $(document).ready(function () {
+            console.info("document ready");
+        });
+    </SCRIPT>
+</BODY>
+
+</HTML>
